@@ -1,0 +1,70 @@
+dim: 2
+time:
+  dt: 0.005
+  t_end: 80.0
+plant:
+  A: [[-0.1, 1.0], [-2.0, -0.5]]
+  B: [[1.0, 0.0], [0.0, 0.3]]
+  w: [0.5, 0.3]
+  x0: [1.0, 0.5]
+initial_G: identity
+coupling:
+  type: rank1
+  alpha: 0.5
+  gamma: 1.0
+relaxation:
+  tau: 5.0
+interaction:
+  type: landau
+  mu: 0.8
+  g_c: 1.15
+  nu: 0.3
+feedback:
+  type: traceless
+  kappa: -0.15
+observation:
+  type: additive
+  sigma0: 0.04
+  beta: 0.5
+eigenvalue_clamp:
+  lo: 0.3
+  hi: 5.0
+seed: 42
+
+controllers:
+  - name: pulsed_fast
+    type: pulsed
+    gain: 2.5
+    u_max: 3.0
+    period: 2.0
+    duty: 0.4
+
+  - name: pulsed_slow
+    type: pulsed
+    gain: 2.5
+    u_max: 3.0
+    period: 8.0
+    duty: 0.3
+
+  - name: proportional
+    type: proportional
+    gain: 1.5
+    u_max: 3.0
+
+  - name: proportional_strong
+    type: proportional
+    gain: 3.0
+    u_max: 3.0
+
+  - name: aniso_aware
+    type: aniso_aware
+    gain: 1.5
+    u_max: 3.0
+
+  - name: aniso_aware_strong
+    type: aniso_aware
+    gain: 3.0
+    u_max: 3.0
+
+output:
+  csv: bench_results.csv

@@ -1,0 +1,27 @@
+# Build
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+imgui.ini
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Data artifacts (regeneratable)
+*.csv
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Cursor
+.cursorrules
