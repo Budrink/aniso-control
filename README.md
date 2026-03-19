@@ -1,9 +1,9 @@
 # Anisotropy-Aware Control in Self-Organizing Media
 
-Real-time simulation and analysis of structure-aware control strategies
+Simulation and analysis of structure-aware control strategies
 in spatially extended systems with tensor-valued connectivity.
 
-![Controller comparison — 1D sweep](figures/fig6_summary.png)
+![Controller divergence — thermal runaway regime](figures/overnight/thermal_divergence.png)
 
 ## What is this?
 
@@ -11,42 +11,70 @@ A 2D grid of dynamical systems coupled through a **connectivity tensor G**.
 Control effort heats the medium; heat flows anisotropically through G⁻¹;
 excessive heating destroys connectivity, making further control ineffective.
 
-The central question: **can a controller that reads the structure of the
-medium outperform a blind one?**
+The central question: **what happens when actuation degrades observability?**
 
-Short answer: **yes** — by directing effort along the "healthy" eigenvectors
-of G, the anisotropy-aware controller achieves better tracking with less
-energy, and avoids the overheating trap that limits proportional control.
-
-![Phase diagram — stability map](figures/phase_stability.png)
+In classical control, sensing quality is assumed to be independent of actuation.
+This model explores the consequences when that assumption breaks down:
+control effort deforms the medium, the medium determines what can be observed,
+and the controller must work with progressively degraded information.
 
 ## Key results
 
-- **Proportional control has an optimum beyond which it gets worse.**
-  At high gain it overheats the medium, degrading connectivity faster
-  than it can stabilize the state.
+- **Resolution-aware control outperforms classical controllers by orders of magnitude**
+  in degradation-coupled regimes. At strong coupling, AnisoAware maintains
+  energy ~20 while Proportional diverges to ~1200 and PID to ~3700.
 
-- **Structure-aware (AnisoAware) control is both more precise and more
-  efficient.** It reads G's eigenstructure and pushes harder where
-  connectivity is intact.
+- **PID is structurally incompatible with degradation-coupled systems.**
+  The integral term accumulates error caused by medium degradation,
+  driving waste heat that further destroys observability — a positive
+  feedback loop that leads to catastrophic breakdown.
 
-- **Event-triggered + anisotropy-aware** combines minimal intervention
-  (activates only when instability is detected) with directional
-  awareness — lowest energy cost at near-optimal precision.
+- **Pulsed heating changes the controllability landscape.**
+  Heating in bursts instead of continuously creates recovery windows
+  where the medium regains structure and observability improves.
+  This shifts the stability boundary, making previously uncontrollable
+  regimes accessible.
 
-- **Phase diagram (gain × coupling)** reveals a stability window:
-  a narrow region where control forms structure without destroying it.
+- **Phase transitions between stable and runaway attractors** are sharp
+  and controller-dependent. The critical resolution coupling l₀ where
+  the system transitions from cold (stable) to hot (runaway) differs
+  by 3–4x between Proportional and AnisoAware.
+
+![Thermal runaway sweep — all controllers](figures/overnight/thermal_runaway.png)
+
+## Controllers
+
+| Controller | Strategy | Behavior in degradation regime |
+|---|---|---|
+| Proportional | u = −K·x | Overheats; finds bad but bounded hot attractor |
+| PID | u = −Kp·x − Ki·∫x − Kd·dx/dt | Integral term feeds degradation loop; catastrophic |
+| AnisoAware | K weighted by G eigenvectors and Fisher information | Directs effort along well-observed axes; stable deepest |
+| EventTriggered | AnisoAware, activates on threat detection | Minimal energy with directional awareness |
+
+## Heater strategies
+
+| Heater | Strategy |
+|---|---|
+| Constant | Continuous power injection |
+| Pulsed | Periodic on/off with configurable duty cycle |
+| EventDriven | Activates on local barrier health |
+| GlobalEvent | Activates on global barrier anisotropy |
+| AdaptivePulsed | Adjusts duty cycle based on barrier health |
 
 ## Architecture
 
 ```
 include/aniso/
   types.hpp          — Vec<Dim>, Mat<Dim>, TensorField<Dim> (Eigen)
-  controller.hpp     — Proportional, AnisoAware, Pulsed, EventTriggered
+  controller.hpp     — Proportional, PID, AnisoAware, Pulsed, EventTriggered
+  resolution.hpp     — Resolution scale L(G) = l₀ · G^(α/2)
+  observer.hpp       — Resolution-limited observer with Fisher information
   coupling.hpp       — Rank1 / Isotropic state-to-tensor coupling
   feedback.hpp       — Traceless / Full tensor feedback into state
-  grid.hpp           — 2D GridEngine: state x, energy E, tensor G dynamics
-  grid_benchmark.hpp — Parallel sweep infrastructure (std::async)
+  g_response.hpp     — G dynamics: relax_aniso, relax_energy, melt, landau_energy
+  heater.hpp         — Constant, Pulsed, EventDriven, GlobalEvent, AdaptivePulsed
+  grid.hpp           — 2D GridEngine: full tensor Laplacian, wall absorption
+  grid_benchmark.hpp — Parallel 1D/2D sweep infrastructure (std::async)
   config.hpp         — YAML parsing → engine construction
 
 src/
@@ -54,13 +82,17 @@ src/
   gui_main.cpp       — Real-time GUI (Dear ImGui + ImPlot + GLFW)
 
 configs/
-  grid_demo.yaml     — Interactive demo configuration
-  grid_sweep.yaml    — 1D sweep (gain)
-  grid_sweep2d.yaml  — 2D phase diagram (gain × alpha)
+  grid_demo.yaml              — Interactive demo
+  overnight_thermal_runaway.yaml   — 1D sweep: resolution coupling l₀
+  overnight_disruption_map.yaml    — 2D sweep: heater power × cooling rate
+  overnight_pulsed_critical.yaml   — 2D sweep: heater power × duty cycle
+  overnight_landau.yaml            — 1D sweep: Landau phase transition
+  overnight_adaptive_critical.yaml — 2D sweep: adaptive heater power × l₀
 
 scripts/
-  plot_sweep.py      — Publication figures from 1D sweep CSV
-  plot_phase.py      — Phase diagram heatmaps from 2D sweep CSV
+  plot_overnight.py  — Publication figures from overnight sweep CSVs
+  plot_heater_all.py — Heater strategy comparison plots
+  plot_atlas.py      — Parameter atlas generation
 ```
 
 ## Build
@@ -77,53 +109,49 @@ cmake --build build --config Release
 
 **Interactive GUI:**
 ```bash
-./build/aniso_gui --config configs/grid_demo.yaml
+./build/aniso_gui configs/grid_demo.yaml
 ```
 
-**1D parameter sweep (parallel):**
+**1D parameter sweep (parallel, multi-controller):**
 ```bash
-./build/aniso grid_sweep configs/grid_sweep.yaml
-python scripts/plot_sweep.py grid_sweep.csv figures/
+./build/aniso grid_sweep configs/overnight_thermal_runaway.yaml
+python scripts/plot_overnight.py
 ```
 
-**2D phase diagram (parallel):**
+**2D phase diagram (parallel, multi-controller):**
 ```bash
-./build/aniso grid_sweep2d configs/grid_sweep2d.yaml
-python scripts/plot_phase.py grid_sweep2d.csv figures/
+./build/aniso grid_sweep2d configs/overnight_disruption_map.yaml
+python scripts/plot_overnight.py
 ```
 
 ## Physics model
 
 Each grid cell (i, j) has state **x**, energy **E**, and connectivity tensor **G**:
 
-1. **Controller** computes u(x, G) — may be structure-aware
-2. **Energy injection**: E += f(|u|) · dt  (control = heating)
-3. **Energy diffusion** through G⁻¹: anisotropic, blocked by barriers
+1. **Controller** computes u(x, G, F) — may use Fisher information
+2. **Energy injection**: E += η|u|² · dt  (control effort → waste heat)
+3. **Energy diffusion** via full tensor Laplacian ∇·(G⁻¹·∇E)
 4. **Energy dissipation**: E -= γ · E · dt
-5. **G relaxation** toward identity with τ_eff = τ₀(1 + κ · aniso²)
-6. **Stochastic noise** scaled by √E — thermal fluctuations
+5. **G response** to energy: melt, Landau transition, or relaxation
+6. **Resolution coupling**: observation noise scales as L(G) = l₀ · G^(α/2)
+7. **Heater**: external energy source (constant, pulsed, or adaptive)
 
 The connectivity tensor G simultaneously defines spatial structure
-and mediates transport, creating a natural feedback loop between
-control effort and medium integrity.
-
-## Controllers
-
-| Controller | Strategy | Key property |
-|---|---|---|
-| Proportional | u = −K·x | Baseline; overheats at high gain |
-| AnisoAware | u = −K(G)·x, K weighted by G eigenvectors | Pushes along healthy axes |
-| Pulsed | Proportional with duty cycle | Allows cooling between pulses |
-| EventTriggered | AnisoAware, activates on threat detection | Minimal energy, smart direction |
+and mediates transport. When control effort heats the medium, G degrades,
+observation quality drops, and the controller must compensate — creating
+a feedback loop between actuation and observability.
 
 ## About
 
-This repository explores dynamic systems where control effort
-interacts with system structure and degradation.
+This project explores a class of systems where control effort
+interacts with system structure: actuation degrades the medium,
+the medium determines what can be observed, and classical control
+assumptions about fixed observability break down.
 
-If you work on simulation, system dynamics or control
-and encounter difficult or unexpected behaviour in models,
-feel free to reach out.
+The model is not specific to any single application.
+The structural mechanism — control-induced degradation of observability —
+may appear in thermal systems, stressed materials, reactive processes,
+and other domains where the actuator changes the medium itself.
 
 **Konstantin Budrin** — [LinkedIn](https://www.linkedin.com/in/konstantin-b-658845156/) · [kbudrin@gmail.com](mailto:kbudrin@gmail.com)
 
