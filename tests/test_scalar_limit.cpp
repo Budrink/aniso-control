@@ -40,8 +40,9 @@ static double scalar_sim(double a, double b, double w, double x0,
 int main() {
     // Build engine from scalar_limit.yaml but with zero noise
     YAML::Node cfg = YAML::LoadFile("configs/scalar_limit.yaml");
-    cfg["observation"]["sigma0"] = 0.0;
-    cfg["observation"]["beta"]   = 0.0;
+    cfg["resolution"]["type"]    = "identity";
+    cfg["resolution"]["l0"]      = 0.0;
+    cfg["observation"]["sigma_G"] = 0.0;
 
     auto engine = aniso::build_engine<1>(cfg);
     auto result = engine.run();

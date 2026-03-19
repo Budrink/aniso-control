@@ -1,0 +1,99 @@
+dim: 2
+
+# UNSTABLE plant + self-sustaining barrier + resolution degradation.
+# Sweep heater power to find the edge of controllability.
+
+grid:
+  Nx: 32
+  Ny: 32
+  D_E: 0.5
+  D_x: 0.15          # moderate state diffusion
+  D_G: 0.03          # barrier coupling → enables cascading
+  gamma_diss: 0.8     # LOW dissipation → energy builds up
+  kappa_tau: 15.0     # strong self-sustaining barrier
+  noise_amp: 0.8      # strong thermal noise → breaks barrier at high E
+  g_noise_init: 0.08
+  eta_ctrl: 0.5       # 50% of control effort becomes waste heat
+  wall_absorb: true
+  wall_radius: 0.40   # tight wall
+  heat_profile:
+    cx: 0.5
+    cy: 0.5
+    rx: 0.18          # focused central heating
+    ry: 0.18
+    peak: 1.0
+
+time:
+  dt: 0.01
+
+plant:
+  # UNSTABLE oscillator: eigenvalues 0.15 ± 0.6i → grows without control
+  A: [[0.15, 0.6], [-0.6, 0.15]]
+  B: [[1, 0], [0, 1]]
+  w: [0.4, 0.25]     # strong persistent disturbance
+  x0: [0, 0]
+
+initial_G: identity
+coupling:
+  type: isotropic
+  alpha: 0.3
+  gamma: 1.5
+
+relaxation:
+  tau: 2.0
+
+g_response:
+  type: relax_aniso    # self-sustaining barrier + noise destruction
+
+heater:
+  type: constant
+  power: 3.0           # swept
+
+feedback:
+  type: traceless
+  kappa: -0.12
+
+resolution:
+  type: metric
+  l0: 0.06
+  alpha: 1.2           # resolution degrades with G deformation
+
+observation:
+  sigma_G: 0.35
+
+eigenvalue_clamp:
+  lo: 0.25
+  hi: 6.0
+
+seed: 42
+
+controllers:
+  - name: Proportional
+    type: proportional
+    gain: 2.5
+    u_max: 12.0
+  - name: AnisoAware
+    type: aniso_aware
+    gain: 2.5
+    u_max: 12.0
+  - name: EventTriggered
+    type: event_triggered
+    gain: 3.5
+    u_max: 12.0
+    trigger: 0.3
+    hysteresis: 0.5
+    anticipation: 6.0
+
+controller:
+  type: proportional
+  gain: 2.5
+  u_max: 12.0
+
+sweep:
+  param: heater.power
+  range: [0.5, 12.0, 0.5]
+  steps: 4000
+  warmup: 500
+
+output:
+  csv: sweep_crit_fast.csv

@@ -115,8 +115,8 @@ public:
         const auto I = Mat<Dim>::Identity();
 
         for (int i = 0; i < N_; ++i) {
-            Vec<Dim> y = observer_->observe(x_[i], G_[i], rng_);
-            Vec<Dim> u = controller_->compute(t_, y, G_[i]);
+            auto obs = observer_->observe(x_[i], G_[i], rng_);
+            Vec<Dim> u = controller_->compute(t_, obs);
             last_u_[i] = u;
 
             // --- state dynamics ---

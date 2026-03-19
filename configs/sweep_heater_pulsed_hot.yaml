@@ -1,0 +1,103 @@
+dim: 2
+
+# PULSED HEATER SWEEP — HIGH POWER REGIME
+# External heater power=3.0 (dominant energy source, not waste heat).
+# This is the regime where pulsed heating creates meaningful cooling windows.
+# Barrier must survive off-cycles due to G inertia (memory ≈ tau_0=1.5).
+# During off-cycles: system cools → resolution recovers → better observation.
+
+grid:
+  Nx: 32
+  Ny: 32
+  D_E: 0.5
+  D_x: 0.15
+  D_G: 0.04
+  gamma_diss: 0.4
+  kappa_tau: 2.0
+  noise_amp: 1.0
+  g_noise_init: 0.08
+  eta_ctrl: 1.0
+  wall_absorb: true
+  wall_radius: 0.38
+  heat_profile:
+    cx: 0.5
+    cy: 0.5
+    rx: 0.20
+    ry: 0.20
+    peak: 1.0
+
+time:
+  dt: 0.01
+
+plant:
+  A: [[-0.1, 0.5], [-0.5, -0.1]]
+  B: [[1, 0], [0, 1]]
+  w: [0.4, 0.25]
+  x0: [0, 0]
+
+initial_G: identity
+coupling:
+  type: isotropic
+  alpha: 0.3
+  gamma: 1.2
+
+relaxation:
+  tau: 1.5
+
+g_response:
+  type: melt
+
+heater:
+  type: pulsed
+  power: 3.0
+  period: 1.5
+  duty: 0.5
+
+feedback:
+  type: traceless
+  kappa: -0.15
+
+resolution:
+  type: metric
+  l0: 0.30
+  alpha: 1.5
+
+observation:
+  sigma_G: 0.4
+
+eigenvalue_clamp:
+  lo: 0.2
+  hi: 8.0
+
+seed: 42
+
+controllers:
+  - name: Proportional
+    type: proportional
+    gain: 3.0
+    u_max: 20.0
+  - name: AnisoAware
+    type: aniso_aware
+    gain: 3.0
+    u_max: 20.0
+  - name: EventTriggered
+    type: event_triggered
+    gain: 4.0
+    u_max: 20.0
+    trigger: 0.3
+    hysteresis: 0.5
+    anticipation: 5.0
+
+controller:
+  type: aniso_aware
+  gain: 3.0
+  u_max: 20.0
+
+sweep:
+  param: heater.duty
+  range: [0.10, 1.00, 0.05]
+  steps: 5000
+  warmup: 500
+
+output:
+  csv: sweep_heater_pulsed_hot.csv

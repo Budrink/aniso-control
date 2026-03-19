@@ -1,0 +1,107 @@
+dim: 2
+
+# Moderate instability regime:
+# - Weakly unstable plant (eigenvalue +0.25) — controller MUST work
+# - Strong resolution coupling — noise drives waste heat
+# - High eta_ctrl — waste heat is significant
+# - Melt response — energy degrades barrier
+# 2D sweep: heater.power vs gamma_diss to find the operating boundary
+
+grid:
+  Nx: 32
+  Ny: 32
+  D_E: 0.5
+  D_x: 0.15
+  D_G: 0.03
+  gamma_diss: 0.8
+  kappa_tau: 2.0       # moderate melt strength
+  noise_amp: 1.0
+  g_noise_init: 0.08
+  eta_ctrl: 0.7        # 70% of control → heat
+  wall_absorb: true
+  wall_radius: 0.38
+  heat_profile:
+    cx: 0.5
+    cy: 0.5
+    rx: 0.18
+    ry: 0.18
+    peak: 1.0
+
+time:
+  dt: 0.01
+
+plant:
+  # Weakly unstable: eigenvalues +0.25 ± 0.5i
+  A: [[0.25, 0.5], [-0.5, 0.25]]
+  B: [[1, 0], [0, 1]]
+  w: [0.35, 0.2]
+  x0: [0, 0]
+
+initial_G: identity
+coupling:
+  type: isotropic
+  alpha: 0.3
+  gamma: 1.2
+
+relaxation:
+  tau: 1.5
+
+g_response:
+  type: melt
+
+heater:
+  type: constant
+  power: 3.0
+
+feedback:
+  type: traceless
+  kappa: -0.1
+
+resolution:
+  type: metric
+  l0: 0.20
+  alpha: 1.5
+
+observation:
+  sigma_G: 0.4
+
+eigenvalue_clamp:
+  lo: 0.2
+  hi: 8.0
+
+seed: 42
+
+controllers:
+  - name: Proportional
+    type: proportional
+    gain: 1.5
+    u_max: 8.0
+  - name: AnisoAware
+    type: aniso_aware
+    gain: 1.5
+    u_max: 8.0
+  - name: EventTriggered
+    type: event_triggered
+    gain: 2.0
+    u_max: 8.0
+    trigger: 0.3
+    hysteresis: 0.5
+    anticipation: 5.0
+
+controller:
+  type: proportional
+  gain: 1.5
+  u_max: 8.0
+
+sweep2d:
+  param1:
+    name: heater.power
+    range: [1.0, 10.0, 0.5]
+  param2:
+    name: grid.gamma_diss
+    range: [0.3, 2.0, 0.1]
+  steps: 4000
+  warmup: 500
+
+output:
+  csv: sweep_crit3.csv

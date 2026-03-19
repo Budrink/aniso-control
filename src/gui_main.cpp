@@ -109,8 +109,9 @@ struct GuiState {
     float ctrl_gain = 1.5f;
     float ctrl_umax = 3.0f;
     float coupling_alpha = 0.5f;
-    float obs_beta = 0.5f;
-    float obs_sigma0 = 0.04f;
+    float res_l0 = 0.04f;
+    float res_alpha = 1.0f;
+    float obs_sigma_G = 0.3f;
     float interact_mu = 0.8f;
     float eig_lo = 0.3f, eig_hi = 5.0f;
     bool params_dirty = false;   // true when a slider changed
@@ -154,18 +155,26 @@ struct GuiState {
     bool grid_loaded  = false;
     bool grid_just_loaded = false;
     int  grid_steps_per_frame = 100;
-    float gr_D_E = 0.5f, gr_D_x = 0.1f;
-    float gr_drive_peak = 5.0f, gr_drive_rx = 0.18f, gr_drive_ry = 0.18f;
-    float gr_drive_cx = 0.5f, gr_drive_cy = 0.5f;
+    float gr_D_E = 0.5f, gr_D_x = 0.1f, gr_D_G = 0.0f;
+    float gr_heat_peak = 1.0f, gr_heat_rx = 0.25f, gr_heat_ry = 0.25f;
+    float gr_heat_cx = 0.5f, gr_heat_cy = 0.5f;
+    float gr_eta_ctrl = 0.3f;
+    bool  gr_wall_absorb = true;
     float gr_tau = 1.0f;
     float gr_gain = 3.0f, gr_umax = 20.0f, gr_alpha = 0.5f;
     float gr_gamma_diss = 1.0f;
     float gr_kappa_tau = 20.0f;
     float gr_noise_amp = 0.5f;
     int gr_ctrl_idx = 0;
-    int gr_map_mode = 0;   // 0=Health 1=Energy 2=|x| 3=|u|
+    int gr_map_mode = 0;   // 0=Health 1=Energy 2=|x| 3=|u| 4=Q_heat
+    int gr_resp_idx = 0;   // 0=relax_aniso 1=relax_energy 2=melt 3=landau_energy
+    int gr_heat_idx = 0;   // 0=constant 1=pulsed 2=event_driven 3=aniso_aware
+    float gr_heat_power = 2.0f;
+    float gr_heat_period = 5.0f, gr_heat_duty = 0.5f;
+    float gr_heat_trigger = 0.5f, gr_heat_hyst = 1.5f;
     float gr_period = 4.0f, gr_duty = 0.5f;
     float gr_trigger = 0.5f, gr_hyst = 0.6f, gr_antic = 5.0f;
+    float gr_res_l0 = 0.04f, gr_res_alpha = 1.0f, gr_obs_sigma_G = 0.3f;
 
     // Time-history ring buffers for Grid tab
     static constexpr int GR_HIST = 600;
@@ -322,10 +331,14 @@ static void sync_params_from_config(GuiState& gs) {
     if (coupling) {
         gs.coupling_alpha = coupling["alpha"].as<float>(0.5f);
     }
+    auto res = gs.current_cfg["resolution"];
+    if (res) {
+        gs.res_l0     = res["l0"].as<float>(0.04f);
+        gs.res_alpha  = res["alpha"].as<float>(1.0f);
+    }
     auto obs = gs.current_cfg["observation"];
     if (obs) {
-        gs.obs_sigma0 = obs["sigma0"].as<float>(0.04f);
-        gs.obs_beta = obs["beta"].as<float>(0.5f);
+        gs.obs_sigma_G = obs["sigma_G"].as<float>(0.3f);
     }
     auto inter = gs.current_cfg["interaction"];
     if (inter) {
@@ -367,10 +380,11 @@ static bool rebuild_engine(GuiState& gs) {
         if (cfg["coupling"]) {
             cfg["coupling"]["alpha"] = static_cast<double>(gs.coupling_alpha);
         }
-        if (cfg["observation"]) {
-            cfg["observation"]["sigma0"] = static_cast<double>(gs.obs_sigma0);
-            cfg["observation"]["beta"] = static_cast<double>(gs.obs_beta);
-        }
+        if (!cfg["resolution"]) cfg["resolution"] = YAML::Node();
+        cfg["resolution"]["l0"]    = static_cast<double>(gs.res_l0);
+        cfg["resolution"]["alpha"] = static_cast<double>(gs.res_alpha);
+        if (!cfg["observation"]) cfg["observation"] = YAML::Node();
+        cfg["observation"]["sigma_G"] = static_cast<double>(gs.obs_sigma_G);
         if (cfg["interaction"]) {
             cfg["interaction"]["mu"] = static_cast<double>(gs.interact_mu);
         }
@@ -403,17 +417,40 @@ static bool rebuild_grid(GuiState& gs) {
         gs.grid_running = false;
 
         auto& gp = gs.grid->params();
-        gs.gr_D_E        = (float)gp.D_E;
-        gs.gr_D_x        = (float)gp.D_x;
-        gs.gr_drive_peak = (float)gp.drive_peak;
-        gs.gr_drive_rx   = (float)gp.drive_rx;
-        gs.gr_drive_ry   = (float)gp.drive_ry;
-        gs.gr_drive_cx   = (float)gp.drive_cx;
-        gs.gr_drive_cy   = (float)gp.drive_cy;
-        gs.gr_tau        = (float)gp.tau_0;
-        gs.gr_gamma_diss = (float)gp.gamma_diss;
-        gs.gr_kappa_tau  = (float)gp.kappa_tau;
-        gs.gr_noise_amp  = (float)gp.noise_amp;
+        gs.gr_D_E         = (float)gp.D_E;
+        gs.gr_D_x         = (float)gp.D_x;
+        gs.gr_heat_peak   = (float)gp.heat_peak;
+        gs.gr_heat_rx     = (float)gp.heat_rx;
+        gs.gr_heat_ry     = (float)gp.heat_ry;
+        gs.gr_heat_cx     = (float)gp.heat_cx;
+        gs.gr_heat_cy     = (float)gp.heat_cy;
+        gs.gr_eta_ctrl    = (float)gp.eta_ctrl;
+        gs.gr_wall_absorb = gp.wall_absorb;
+        gs.gr_tau         = (float)gp.tau_0;
+        gs.gr_D_G         = (float)gp.D_G;
+        gs.gr_gamma_diss  = (float)gp.gamma_diss;
+        gs.gr_kappa_tau   = (float)gp.kappa_tau;
+        gs.gr_noise_amp   = (float)gp.noise_amp;
+
+        // Detect g_response type index
+        {
+            std::string rn = gs.grid->g_resp().type_name();
+            if (rn == "relax_aniso")        gs.gr_resp_idx = 0;
+            else if (rn == "relax_energy")  gs.gr_resp_idx = 1;
+            else if (rn == "melt")          gs.gr_resp_idx = 2;
+            else if (rn == "landau_energy") gs.gr_resp_idx = 3;
+            else gs.gr_resp_idx = 0;
+        }
+
+        // Detect heater type index
+        {
+            std::string hn = gs.grid->heat().type_name();
+            if (hn == "constant")        gs.gr_heat_idx = 0;
+            else if (hn == "pulsed")     gs.gr_heat_idx = 1;
+            else if (hn == "event_driven") gs.gr_heat_idx = 2;
+            else if (hn == "aniso_aware")  gs.gr_heat_idx = 3;
+            else gs.gr_heat_idx = 0;
+        }
 
         auto ctrl_n = cfg["controller"];
         if (ctrl_n) {
@@ -422,6 +459,12 @@ static bool rebuild_grid(GuiState& gs) {
         }
         auto coup_n = cfg["coupling"];
         if (coup_n) gs.gr_alpha = coup_n["alpha"].as<float>(0.5f);
+
+        auto res_n = cfg["resolution"];
+        gs.gr_res_l0      = res_n ? res_n["l0"].as<float>(0.04f) : 0.04f;
+        gs.gr_res_alpha   = res_n ? res_n["alpha"].as<float>(1.0f) : 1.0f;
+        auto obs_n = cfg["observation"];
+        gs.gr_obs_sigma_G = obs_n ? obs_n["sigma_G"].as<float>(0.3f) : 0.3f;
 
         std::memset(gs.gr_hist_x, 0, sizeof(gs.gr_hist_x));
         std::memset(gs.gr_hist_E, 0, sizeof(gs.gr_hist_E));
@@ -507,30 +550,7 @@ static bool load_config(GuiState& gs) {
         gs.grid_running = false;
         gs.grid_just_loaded = false;
         if (gs.current_cfg["grid"]) {
-            gs.grid = std::make_unique<aniso::GridEngine<DIM>>(
-                aniso::build_grid<DIM>(gs.current_cfg));
-            gs.grid->reset();
-            gs.grid_loaded = true;
-            gs.grid_just_loaded = true;
-            auto& gp = gs.grid->params();
-            gs.gr_D_E        = (float)gp.D_E;
-            gs.gr_D_x        = (float)gp.D_x;
-            gs.gr_drive_peak = (float)gp.drive_peak;
-            gs.gr_drive_rx   = (float)gp.drive_rx;
-            gs.gr_drive_ry   = (float)gp.drive_ry;
-            gs.gr_drive_cx   = (float)gp.drive_cx;
-            gs.gr_drive_cy   = (float)gp.drive_cy;
-            gs.gr_tau        = (float)gp.tau_0;
-            gs.gr_gamma_diss = (float)gp.gamma_diss;
-            gs.gr_kappa_tau  = (float)gp.kappa_tau;
-            gs.gr_noise_amp  = (float)gp.noise_amp;
-            auto ctrl_n = gs.current_cfg["controller"];
-            if (ctrl_n) {
-                gs.gr_gain = ctrl_n["gain"].as<float>(3.0f);
-                gs.gr_umax = ctrl_n["u_max"].as<float>(20.0f);
-            }
-            auto coup_n = gs.current_cfg["coupling"];
-            if (coup_n) gs.gr_alpha = coup_n["alpha"].as<float>(0.5f);
+            rebuild_grid(gs);
         }
 
         return true;
@@ -1825,7 +1845,11 @@ int main(int argc, char* argv[]) {
                         ImGui::SameLine();
                         if (ImGui::SliderFloat("alpha##gr", &gs.gr_alpha, 0.0f, 2.0f, "%.2f"))
                             gs.grid->coup().set_alpha(gs.gr_alpha);
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Control-to-heating coupling.\nHigher = more energy injected per |u|.");
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("G-drive coupling strength.");
+                        ImGui::SameLine();
+                        if (ImGui::SliderFloat("eta##gr", &gs.gr_eta_ctrl, 0.0f, 2.0f, "%.2f"))
+                            gs.grid->params().eta_ctrl = gs.gr_eta_ctrl;
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Controller waste heat: eta * |u|^2.\nHigher = control generates more heat.");
 
                         // Pulsed-specific sliders
                         if (gs.gr_ctrl_idx == 2) {
@@ -1857,7 +1881,32 @@ int main(int argc, char* argv[]) {
                                 evt_on ? "[ON]" : "[off]");
                         }
 
-                        // Row 2: Energy & relaxation
+                        // Row 2: G-response model + energy & relaxation
+                        {
+                            const char* resp_names[] = {"relax_aniso","relax_energy","melt","landau_energy"};
+                            ImGui::SetNextItemWidth(130);
+                            if (ImGui::Combo("G model##gr", &gs.gr_resp_idx, resp_names, 4)) {
+                                aniso::GResponseParams rp{
+                                    (double)gs.gr_tau, (double)gs.gr_kappa_tau,
+                                    (double)gs.gr_noise_amp,
+                                    gs.grid->params().eig_lo, gs.grid->params().eig_hi};
+                                std::unique_ptr<aniso::IGResponse<DIM>> nr;
+                                switch (gs.gr_resp_idx) {
+                                    case 0: nr = std::make_unique<aniso::RelaxAnisoResponse<DIM>>(rp); break;
+                                    case 1: nr = std::make_unique<aniso::RelaxEnergyResponse<DIM>>(rp); break;
+                                    case 2: nr = std::make_unique<aniso::MeltResponse<DIM>>(rp); break;
+                                    case 3: nr = std::make_unique<aniso::LandauEnergyResponse<DIM>>(rp); break;
+                                }
+                                gs.grid->swap_g_response(std::move(nr));
+                            }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip(
+                                "G tensor response model:\n"
+                                "relax_aniso: anisotropy protects itself\n"
+                                "relax_energy: hot zones relax slower\n"
+                                "melt: energy pushes G toward isotropy\n"
+                                "landau_energy: phase transition at critical E");
+                        }
+                        ImGui::SameLine();
                         if (ImGui::SliderFloat("D_E##gr", &gs.gr_D_E, 0.0f, 3.0f, "%.2f"))
                             gs.grid->params().D_E = gs.gr_D_E;
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Energy diffusion coefficient.\nEnergy flows through G^{-1}.");
@@ -1868,45 +1917,140 @@ int main(int argc, char* argv[]) {
                         ImGui::SameLine();
                         if (ImGui::SliderFloat("tau##gr", &gs.gr_tau, 0.1f, 30.0f, "%.2f",
                                 ImGuiSliderFlags_Logarithmic))
-                            gs.grid->params().tau_0 = gs.gr_tau;
+                            gs.grid->g_resp().set_param("tau", gs.gr_tau);
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Base G relaxation time (log scale).\nSmaller = faster relaxation.\nMust compete with drive.");
                         ImGui::SameLine();
                         if (ImGui::SliderFloat("k_tau##gr", &gs.gr_kappa_tau, 0.0f, 100.0f, "%.1f"))
-                            gs.grid->params().kappa_tau = gs.gr_kappa_tau;
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Anisotropy slows relaxation.\ntau_eff = tau_0 * (1 + k_tau * aniso^2).\nHigher = barriers self-sustain longer.");
+                            gs.grid->g_resp().set_param("kappa", gs.gr_kappa_tau);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip(
+                            "Model-dependent parameter:\n"
+                            "relax_aniso: aniso sensitivity\n"
+                            "relax_energy: energy sensitivity\n"
+                            "melt: melt strength\n"
+                            "landau_energy: Landau coupling");
                         ImGui::SameLine();
                         if (ImGui::SliderFloat("Noise##gr", &gs.gr_noise_amp, 0.0f, 3.0f, "%.2f"))
-                            gs.grid->params().noise_amp = gs.gr_noise_amp;
+                            gs.grid->g_resp().set_param("noise", gs.gr_noise_amp);
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thermal noise amplitude.\nScaled by sqrt(local energy).\nDestroys structure at high E.");
                         ImGui::SameLine();
                         if (ImGui::SliderFloat("D_x##gr", &gs.gr_D_x, 0.0f, 1.0f, "%.2f"))
                             gs.grid->params().D_x = gs.gr_D_x;
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("State diffusion through G^{-1}.\nBarrier blocks state flow.");
+                        ImGui::SameLine();
+                        if (ImGui::SliderFloat("D_G##gr", &gs.gr_D_G, 0.0f, 0.5f, "%.3f"))
+                            gs.grid->params().D_G = gs.gr_D_G;
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("G tensor diffusion between cells.\nCouples barrier structure spatially.\nNon-zero enables cascading breakdown.");
 
-                        // Row 3: Drive geometry
-                        if (ImGui::SliderFloat("Peak##gr", &gs.gr_drive_peak, 0.5f, 15.0f, "%.1f")) {
-                            gs.grid->params().drive_peak = gs.gr_drive_peak; drive_changed = true;
-                        }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heating zone peak intensity");
+                        // Row 3: Resolution (observation quality tied to G)
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(0.4f,0.8f,1.0f,1.0f), "Resolution");
                         ImGui::SameLine();
-                        if (ImGui::SliderFloat("Rx##gr", &gs.gr_drive_rx, 0.02f, 0.8f, "%.2f")) {
-                            gs.grid->params().drive_rx = gs.gr_drive_rx; drive_changed = true;
+                        if (ImGui::SliderFloat("l0##gr", &gs.gr_res_l0, 0.001f, 0.5f, "%.3f",
+                                ImGuiSliderFlags_Logarithmic))
+                            gs.grid->obs().resolution().set_param("l0", gs.gr_res_l0);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip(
+                            "Base resolution scale.\n"
+                            "Larger = noisier observations.\n"
+                            "Noise amplitude = l0 * G^(alpha/2).");
+                        ImGui::SameLine();
+                        if (ImGui::SliderFloat("alpha##res", &gs.gr_res_alpha, 0.0f, 3.0f, "%.2f"))
+                            gs.grid->obs().resolution().set_param("alpha", gs.gr_res_alpha);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip(
+                            "Resolution-metric coupling exponent.\n"
+                            "alpha=0: isotropic (G doesn't affect obs.)\n"
+                            "alpha=1: standard metric geometry\n"
+                            "alpha>1: resolution degrades faster than G stretches.");
+                        ImGui::SameLine();
+                        if (ImGui::SliderFloat("sig_G##gr", &gs.gr_obs_sigma_G, 0.0f, 2.0f, "%.2f"))
+                            gs.grid->obs().set_sigma_G(gs.gr_obs_sigma_G);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip(
+                            "G estimation noise scale.\n"
+                            "0 = controller sees true G (oracle).\n"
+                            "Higher = controller works with noisier G estimate.");
+
+                        // Row 4: Heater system (independent energy source)
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(1.0f,0.6f,0.2f,1.0f), "Heater");
+                        ImGui::SameLine();
+                        {
+                            const char* heat_types[] = {"constant","pulsed","event_driven","aniso_aware"};
+                            ImGui::SetNextItemWidth(130);
+                            if (ImGui::Combo("##heat_type", &gs.gr_heat_idx, heat_types, 4)) {
+                                std::unique_ptr<aniso::IHeater<DIM>> nh;
+                                switch (gs.gr_heat_idx) {
+                                    case 0: nh = std::make_unique<aniso::ConstantHeater<DIM>>(gs.gr_heat_power); break;
+                                    case 1: nh = std::make_unique<aniso::PulsedHeater<DIM>>(
+                                                gs.gr_heat_power, gs.gr_heat_period, gs.gr_heat_duty); break;
+                                    case 2: nh = std::make_unique<aniso::EventDrivenHeater<DIM>>(
+                                                gs.gr_heat_power, gs.gr_heat_trigger, gs.gr_heat_hyst); break;
+                                    case 3: nh = std::make_unique<aniso::AnisoAwareHeater<DIM>>(gs.gr_heat_power); break;
+                                }
+                                gs.grid->swap_heater(std::move(nh));
+                            }
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip(
+                            "Heater type:\n"
+                            "constant: always on at Power\n"
+                            "pulsed: on/off with Period & Duty\n"
+                            "event_driven: activates when barrier weakens\n"
+                            "aniso_aware: heats weak spots more");
+                        ImGui::SameLine();
+                        if (ImGui::SliderFloat("Power##heat", &gs.gr_heat_power, 0.0f, 15.0f, "%.2f",
+                                ImGuiSliderFlags_Logarithmic))
+                            gs.grid->heat().set_power(gs.gr_heat_power);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heater power.\nIndependent energy source — not controller.");
+
+                        // Pulsed heater sliders
+                        if (gs.gr_heat_idx == 1) {
+                            if (ImGui::SliderFloat("H.Period##heat", &gs.gr_heat_period, 0.1f, 20.0f, "%.1f"))
+                                gs.grid->heat().set_period(gs.gr_heat_period);
+                            ImGui::SameLine();
+                            if (ImGui::SliderFloat("H.Duty##heat", &gs.gr_heat_duty, 0.05f, 1.0f, "%.2f"))
+                                gs.grid->heat().set_duty(gs.gr_heat_duty);
+                        }
+
+                        // Event-driven heater sliders
+                        if (gs.gr_heat_idx == 2) {
+                            if (ImGui::SliderFloat("H.Trig##heat", &gs.gr_heat_trigger, 0.01f, 3.0f, "%.2f"))
+                                gs.grid->heat().set_trigger(gs.gr_heat_trigger);
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heat ON when local anisotropy drops below this.\n(Barrier weakens -> add heat to reform it)");
+                            ImGui::SameLine();
+                            if (ImGui::SliderFloat("H.Hyst##heat", &gs.gr_heat_hyst, 1.01f, 3.0f, "%.2f"))
+                                gs.grid->heat().set_hysteresis(gs.gr_heat_hyst);
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stop heating when aniso > trigger * hyst.\n(Barrier is strong enough)");
+                            bool h_on = gs.grid->heat().is_active();
+                            ImGui::SameLine();
+                            ImGui::TextColored(h_on ? ImVec4(1.0f,0.5f,0.1f,1) : ImVec4(0.5f,0.5f,0.5f,1),
+                                h_on ? "[HEAT]" : "[idle]");
+                        }
+
+                        // Heat profile geometry
+                        bool profile_changed = false;
+                        if (ImGui::SliderFloat("H.Peak##hp", &gs.gr_heat_peak, 0.1f, 5.0f, "%.2f")) {
+                            gs.grid->params().heat_peak = gs.gr_heat_peak; profile_changed = true;
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Spatial profile peak (Gaussian weight at center)");
+                        ImGui::SameLine();
+                        if (ImGui::SliderFloat("H.Rx##hp", &gs.gr_heat_rx, 0.02f, 0.8f, "%.2f")) {
+                            gs.grid->params().heat_rx = gs.gr_heat_rx; profile_changed = true;
                         }
                         ImGui::SameLine();
-                        if (ImGui::SliderFloat("Ry##gr", &gs.gr_drive_ry, 0.02f, 0.8f, "%.2f")) {
-                            gs.grid->params().drive_ry = gs.gr_drive_ry; drive_changed = true;
+                        if (ImGui::SliderFloat("H.Ry##hp", &gs.gr_heat_ry, 0.02f, 0.8f, "%.2f")) {
+                            gs.grid->params().heat_ry = gs.gr_heat_ry; profile_changed = true;
                         }
                         ImGui::SameLine();
-                        if (ImGui::SliderFloat("Cx##gr", &gs.gr_drive_cx, 0.0f, 1.0f, "%.2f")) {
-                            gs.grid->params().drive_cx = gs.gr_drive_cx; drive_changed = true;
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::SliderFloat("Cy##gr", &gs.gr_drive_cy, 0.0f, 1.0f, "%.2f")) {
-                            gs.grid->params().drive_cy = gs.gr_drive_cy; drive_changed = true;
+                        {
+                            bool wall = gs.gr_wall_absorb;
+                            if (ImGui::Checkbox("Wall##gr", &wall)) {
+                                gs.gr_wall_absorb = wall;
+                                gs.grid->params().wall_absorb = wall;
+                                profile_changed = true;
+                            }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wall BC: E=0 on edges.\n(Cylindrical tube cross-section)");
                         }
 
                         ImGui::PopItemWidth();
-                        if (drive_changed) gs.grid->rebuild_drive_profile();
+                        if (drive_changed || profile_changed) gs.grid->rebuild_profiles();
                     }
 
                     ImGui::Separator();
@@ -1939,7 +2083,9 @@ int main(int argc, char* argv[]) {
                         for (int i = 0; i < Nx; ++i) {
                             for (int j = 0; j < Ny; ++j) {
                                 ImU32 col;
-                                if (gs.gr_map_mode == 0) {
+                                if (gs.grid->is_wall(i, j)) {
+                                    col = IM_COL32(30, 35, 50, 255);
+                                } else if (gs.gr_map_mode == 0) {
                                     col = health_color((float)gs.grid->health(i,j));
                                 } else {
                                     float t;
@@ -1998,12 +2144,12 @@ int main(int argc, char* argv[]) {
                             }
                         }
 
-                        // Drive contour overlay (1- and 2-sigma ellipses)
+                        // Heat profile contour overlay (1- and 2-sigma ellipses)
                         {
-                            float dcx = mp.x + gs.gr_drive_cx * map_sz;
-                            float dcy = mp.y + gs.gr_drive_cy * map_sz;
-                            float drx = gs.gr_drive_rx * map_sz;
-                            float dry = gs.gr_drive_ry * map_sz;
+                            float dcx = mp.x + gs.gr_heat_cx * map_sz;
+                            float dcy = mp.y + gs.gr_heat_cy * map_sz;
+                            float drx = gs.gr_heat_rx * map_sz;
+                            float dry = gs.gr_heat_ry * map_sz;
                             const int NP = 32;
                             ImVec2 pts[33];
                             for (int k = 0; k <= NP; ++k) {
@@ -2092,6 +2238,25 @@ int main(int argc, char* argv[]) {
                         ImGui::Text("Health: %.2f (min %.2f)", avg_h, min_h);
                         ImGui::Text("Degraded: %d/%d", degraded, total);
 
+                        ImGui::Spacing();
+                        ImGui::TextColored({1.0f,0.6f,0.4f,1}, "Disruption");
+                        ImGui::Separator();
+                        double wflux = gs.grid->last_wall_flux();
+                        double conf  = gs.grid->confinement_ratio();
+                        double barr  = gs.grid->barrier_anisotropy();
+                        double te    = gs.grid->total_energy();
+                        double ee    = gs.grid->edge_energy();
+                        ImGui::Text("Wall flux:    %.4f", wflux);
+                        ImGui::Text("Confinement:  %.2f", conf);
+                        ImGui::Text("Barrier:      %.3f", barr);
+                        ImGui::Text("Edge E:       %.4f  Total E: %.2f", ee, te);
+                        if (conf < 1.5 && te > 0.1)
+                            ImGui::TextColored({1,0.2f,0.2f,1}, "!! DISRUPTION RISK !!");
+                        else if (conf < 3.0 && te > 0.05)
+                            ImGui::TextColored({1,0.8f,0.2f,1}, "~ barrier weakening ~");
+                        else
+                            ImGui::TextColored({0.3f,1,0.5f,1}, "confined");
+
                         // Push data into ring buffer
                         if (gs.grid_running) {
                             int& p = gs.gr_hist_pos;
@@ -2154,7 +2319,8 @@ int main(int argc, char* argv[]) {
                 {
                     const char* presets[] = {
                         "relaxation.tau", "coupling.alpha", "coupling.gamma",
-                        "interaction.mu", "observation.sigma0", "observation.beta",
+                        "interaction.mu", "resolution.l0", "resolution.alpha",
+                        "observation.sigma_G",
                         "controller.gain", "controller.u_max"
                     };
                     ImGui::SetNextItemWidth(150);

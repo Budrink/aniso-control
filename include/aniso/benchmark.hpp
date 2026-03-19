@@ -55,7 +55,7 @@ BenchResult<Dim> run_one(const YAML::Node& env_cfg,
         detail::make_coupling<Dim>(env_cfg["coupling"]),
         detail::make_interaction<Dim>(env_cfg["interaction"]),
         detail::make_feedback<Dim>(env_cfg["feedback"]),
-        detail::make_observer<Dim>(env_cfg["observation"]),
+        detail::make_observer<Dim>(env_cfg["observation"], env_cfg["resolution"]),
         detail::make_controller<Dim>(ctrl_node)
     );
 

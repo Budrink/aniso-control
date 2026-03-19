@@ -8,13 +8,16 @@ grid:
   gamma_diss: 1.0     # energy dissipation rate
   kappa_tau: 20.0     # anisotropy slows G relaxation
   noise_amp: 0.5      # thermal noise amplitude (scaled by sqrt(E))
+  D_G: 0.02           # G tensor diffusion (barrier coupling between cells)
   g_noise_init: 0.05  # initial G perturbation
-  drive:
+  eta_ctrl: 0.3       # controller waste heat fraction
+  wall_absorb: true   # E = 0 on grid edges (tube cross-section)
+  heat_profile:
     cx: 0.5
     cy: 0.5
-    rx: 0.18
-    ry: 0.18
-    peak: 5.0
+    rx: 0.25
+    ry: 0.25
+    peak: 1.0
 
 time:
   dt: 0.01
@@ -28,12 +31,19 @@ plant:
 initial_G: identity
 
 coupling:
-  type: rank1
+  type: isotropic
   alpha: 0.5
   gamma: 1.0
 
 relaxation:
   tau: 1.0
+
+g_response:
+  type: relax_aniso    # relax_aniso | relax_energy | melt | landau_energy
+
+heater:
+  type: constant       # constant | pulsed | event_driven | aniso_aware
+  power: 2.0
 
 feedback:
   type: traceless

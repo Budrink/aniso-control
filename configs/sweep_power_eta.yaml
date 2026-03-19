@@ -1,0 +1,88 @@
+dim: 2
+
+grid:
+  Nx: 32
+  Ny: 32
+  D_E: 0.5
+  D_x: 0.1
+  gamma_diss: 1.0
+  kappa_tau: 20.0
+  noise_amp: 0.5
+  g_noise_init: 0.05
+  eta_ctrl: 0.3
+  wall_absorb: true
+  wall_radius: 0.45
+  heat_profile:
+    cx: 0.5
+    cy: 0.5
+    rx: 0.25
+    ry: 0.25
+    peak: 1.0
+
+time:
+  dt: 0.01
+
+plant:
+  A: [[-0.1, 0.5], [-0.5, -0.1]]
+  B: [[1, 0], [0, 1]]
+  w: [0.3, 0.15]
+  x0: [0, 0]
+
+initial_G: identity
+coupling:
+  type: isotropic
+  alpha: 0.5
+  gamma: 1.0
+relaxation:
+  tau: 1.0
+g_response:
+  type: relax_aniso
+heater:
+  type: constant
+  power: 2.0
+feedback:
+  type: traceless
+  kappa: -0.15
+observation:
+  type: additive
+  sigma0: 0.02
+  beta: 0.3
+eigenvalue_clamp:
+  lo: 0.3
+  hi: 5.0
+seed: 42
+
+controllers:
+  - name: Proportional
+    type: proportional
+    gain: 3.0
+    u_max: 20.0
+  - name: AnisoAware
+    type: aniso_aware
+    gain: 3.0
+    u_max: 20.0
+  - name: EventTriggered
+    type: event_triggered
+    gain: 3.0
+    u_max: 20.0
+    trigger: 0.5
+    hysteresis: 0.6
+    anticipation: 5.0
+
+controller:
+  type: proportional
+  gain: 3.0
+  u_max: 20.0
+
+sweep2d:
+  param1:
+    name: heater.power
+    range: [0.5, 8.0, 0.5]
+  param2:
+    name: grid.eta_ctrl
+    range: [0.0, 1.5, 0.1]
+  steps: 3000
+  warmup: 500
+
+output:
+  csv: sweep_power_eta.csv

@@ -79,8 +79,8 @@ public:
         const double dt = params_.dt;
         const auto I = Mat<Dim>::Identity();
 
-        Vec<Dim> y = observer_->observe(state_.x, state_.G, rng_);
-        Vec<Dim> u = controller_->compute(state_.t, y, state_.G);
+        auto obs = observer_->observe(state_.x, state_.G, rng_);
+        Vec<Dim> u = controller_->compute(state_.t, obs);
         last_u_ = u;
         recorder_.push(state_.t, state_.x, u, state_.G);
 

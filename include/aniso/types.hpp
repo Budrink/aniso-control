@@ -58,6 +58,14 @@ struct SimState {
     double t = 0.0;
 };
 
+// Information-limited observation: what the controller actually sees
+template<int Dim>
+struct Observation {
+    Vec<Dim> y;              // noisy state estimate
+    TensorField<Dim> G_hat;  // noisy G estimate (controller never sees true G)
+    Mat<Dim> F;              // Fisher information: observation quality per direction
+};
+
 using RNG = std::mt19937_64;
 
 } // namespace aniso
