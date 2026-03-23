@@ -96,11 +96,11 @@ if(MSVC)
 endif()
 
 if(MSVC)
-    target_compile_options(aniso     PRIVATE /W4 /permissive-)
-    target_compile_options(aniso_gui PRIVATE /W4 /permissive-)
+    target_compile_options(aniso     PRIVATE /W4 /permissive- /fp:fast /arch:AVX2 /O2)
+    target_compile_options(aniso_gui PRIVATE /W4 /permissive- /fp:fast /arch:AVX2 /O2)
 else()
-    target_compile_options(aniso     PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(aniso_gui PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(aniso     PRIVATE -Wall -Wextra -Wpedantic -O3 -march=native -ffast-math)
+    target_compile_options(aniso_gui PRIVATE -Wall -Wextra -Wpedantic -O3 -march=native -ffast-math)
 endif()
 
 # --- Tests ---

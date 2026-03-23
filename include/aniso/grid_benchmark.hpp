@@ -38,6 +38,13 @@ struct GridMetrics {
     double tail_wall_flux    = 0;  // wall flux in tail period
     double tail_barrier      = 0;  // barrier anisotropy in tail period
     bool   disruption        = false; // true if barrier collapsed and energy reached wall
+
+    // Fusion viability metrics
+    double avg_E_core        = 0;  // mean energy in core region
+    double fusion_margin     = 0;  // avg_E_core / E_target (>1 = viable)
+    double tail_E_core       = 0;  // core energy in tail period
+    double tail_fusion_margin = 0; // fusion margin in tail period
+    bool   underheat         = false; // true if core energy fell below E_target
 };
 
 template<int Dim>
@@ -60,6 +67,8 @@ GridMetrics run_grid_one(const YAML::Node& cfg,
     double peak_aniso = 0;
     double sum_wall_flux = 0, sum_confinement = 0, sum_barrier = 0;
     double sum_tail_wf = 0, sum_tail_barrier = 0;
+    double sum_E_core = 0, sum_fusion_margin = 0;
+    double sum_tail_E_core = 0, sum_tail_fm = 0;
     int n_accum = 0, n_tail = 0;
 
     // Count interior (non-wall) cells for averaging
@@ -120,12 +129,17 @@ GridMetrics run_grid_one(const YAML::Node& cfg,
         double frame_conf = grid.confinement_ratio();
         double frame_barrier = grid.barrier_anisotropy();
 
+        double frame_E_core = grid.center_energy();
+        double frame_fm     = grid.fusion_margin();
+
         sum_x += frame_x; sum_E += frame_E;
         sum_tr += frame_tr; sum_u += frame_u;
         sum_aniso += frame_aniso;
         sum_wall_flux += frame_wf;
         sum_confinement += frame_conf;
         sum_barrier += frame_barrier;
+        sum_E_core += frame_E_core;
+        sum_fusion_margin += frame_fm;
         peak_aniso = std::max(peak_aniso, frame_max_aniso);
         ++n_accum;
 
@@ -134,6 +148,8 @@ GridMetrics run_grid_one(const YAML::Node& cfg,
             sum_tail_aniso += frame_aniso;
             sum_tail_wf    += frame_wf;
             sum_tail_barrier += frame_barrier;
+            sum_tail_E_core  += frame_E_core;
+            sum_tail_fm      += frame_fm;
             ++n_tail;
         }
 
@@ -157,21 +173,31 @@ GridMetrics run_grid_one(const YAML::Node& cfg,
         m.avg_wall_flux     = sum_wall_flux   / n_accum;
         m.avg_confinement   = sum_confinement / n_accum;
         m.avg_barrier_aniso = sum_barrier     / n_accum;
+        m.avg_E_core        = sum_E_core      / n_accum;
+        m.fusion_margin     = sum_fusion_margin / n_accum;
     }
     if (n_tail > 0) {
         m.tail_x     = sum_tail_x     / n_tail;
         m.tail_aniso = sum_tail_aniso  / n_tail;
         m.tail_wall_flux = sum_tail_wf    / n_tail;
         m.tail_barrier   = sum_tail_barrier / n_tail;
+        m.tail_E_core       = sum_tail_E_core / n_tail;
+        m.tail_fusion_margin = sum_tail_fm    / n_tail;
     }
     // Breakdown: |x| diverging OR barrier completely lost
     m.breakdown = early_stop
                || (m.tail_x > 0.5)
                || (n_tail > 0 && m.tail_aniso < 0.02 && m.tail_x > 0.2);
     // Disruption: barrier collapsed AND energy reaching wall
+    // Note: confinement ratio check only valid without target heating
+    double E_tgt = grid.E_target();
     m.disruption = m.breakdown
                 || (n_tail > 0 && m.tail_barrier < 0.05 && m.tail_wall_flux > 0.01)
-                || (n_tail > 0 && m.avg_confinement < 1.5);
+                || (E_tgt <= 0 && n_tail > 0 && m.avg_confinement < 1.5);
+    // Underheat: reactor failed to maintain fusion conditions
+    m.underheat = (E_tgt > 0)
+              && (n_tail > 0)
+              && (m.tail_fusion_margin < 1.0);
     return m;
 }
 
@@ -180,7 +206,14 @@ GridMetrics run_grid_one(const YAML::Node& cfg,
 inline void set_yaml_param(YAML::Node root,
                            const std::string& path, double val) {
     size_t dot = path.find('.');
-    if (dot == std::string::npos) { root[path] = val; return; }
+    if (dot == std::string::npos) {
+        root[path] = val;
+        // When sweeping E_target, also sync heater.E_target if heater is target-type
+        if (path == "E_target" && root["heater"]
+            && root["heater"]["type"].as<std::string>("") == "target")
+            root["heater"]["E_target"] = val;
+        return;
+    }
     std::string key = path.substr(0, dot);
     std::string rest = path.substr(dot + 1);
     size_t dot2 = rest.find('.');
@@ -366,7 +399,9 @@ bool dump_grid_sweep_csv(const std::vector<GridSweepRow<Dim>>& rows,
       << ",controller,avg_x,avg_E,avg_trG,max_aniso,avg_aniso,avg_effort,"
          "tail_x,tail_aniso,breakdown,"
          "avg_wall_flux,avg_confinement,avg_barrier_aniso,"
-         "tail_wall_flux,tail_barrier,disruption,wall_ms\n";
+         "tail_wall_flux,tail_barrier,disruption,"
+         "avg_E_core,fusion_margin,tail_E_core,tail_fusion_margin,underheat,"
+         "wall_ms\n";
     for (auto& row : rows)
         for (auto& m : row.results)
             f << row.param_value << ',' << m.ctrl_name << ','
@@ -377,7 +412,11 @@ bool dump_grid_sweep_csv(const std::vector<GridSweepRow<Dim>>& rows,
               << m.avg_wall_flux << ',' << m.avg_confinement << ','
               << m.avg_barrier_aniso << ','
               << m.tail_wall_flux << ',' << m.tail_barrier << ','
-              << (m.disruption ? 1 : 0) << ',' << m.wall_ms << '\n';
+              << (m.disruption ? 1 : 0) << ','
+              << m.avg_E_core << ',' << m.fusion_margin << ','
+              << m.tail_E_core << ',' << m.tail_fusion_margin << ','
+              << (m.underheat ? 1 : 0) << ','
+              << m.wall_ms << '\n';
     return true;
 }
 
@@ -392,7 +431,9 @@ inline bool dump_grid_sweep2d_csv(const std::vector<GridMetrics>& results,
       << ",controller,avg_x,avg_E,avg_trG,max_aniso,avg_aniso,avg_effort,"
          "tail_x,tail_aniso,breakdown,"
          "avg_wall_flux,avg_confinement,avg_barrier_aniso,"
-         "tail_wall_flux,tail_barrier,disruption,wall_ms\n";
+         "tail_wall_flux,tail_barrier,disruption,"
+         "avg_E_core,fusion_margin,tail_E_core,tail_fusion_margin,underheat,"
+         "wall_ms\n";
     for (auto& m : results)
         f << m.param1 << ',' << m.param2 << ',' << m.ctrl_name << ','
           << m.avg_x << ',' << m.avg_E << ',' << m.avg_trG << ','
@@ -402,7 +443,11 @@ inline bool dump_grid_sweep2d_csv(const std::vector<GridMetrics>& results,
           << m.avg_wall_flux << ',' << m.avg_confinement << ','
           << m.avg_barrier_aniso << ','
           << m.tail_wall_flux << ',' << m.tail_barrier << ','
-          << (m.disruption ? 1 : 0) << ',' << m.wall_ms << '\n';
+          << (m.disruption ? 1 : 0) << ','
+          << m.avg_E_core << ',' << m.fusion_margin << ','
+          << m.tail_E_core << ',' << m.tail_fusion_margin << ','
+          << (m.underheat ? 1 : 0) << ','
+          << m.wall_ms << '\n';
     return true;
 }
 

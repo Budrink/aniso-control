@@ -8,6 +8,7 @@ cmake-build-*/
 .vscode/
 .idea/
 *.user
+*.code-workspace
 imgui.ini
 
 # OS
@@ -17,6 +18,18 @@ Thumbs.db
 # Data artifacts (regeneratable)
 *.csv
 *.pdf
+
+# Regeneratable figures (only README-referenced are tracked)
+figures/*.png
+figures/**/*.png
+!figures/overnight/thermal_divergence.png
+!figures/overnight/thermal_runaway.png
+!figures/overnight/disruption_boundary.png
+!figures/overnight/landau_transition.png
+!figures/overnight/pulsed_stability_map.png
+!figures/overnight/adaptive_critical_efficiency.png
+!figures/fusion/decisive_experiment.png
+!figures/fusion/heater_comparison.png
 
 # Python
 __pycache__/

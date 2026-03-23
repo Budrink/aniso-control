@@ -115,7 +115,7 @@ public:
         const auto I = Mat<Dim>::Identity();
 
         for (int i = 0; i < N_; ++i) {
-            auto obs = observer_->observe(x_[i], G_[i], rng_);
+            auto obs = observer_->observe(x_[i], G_[i], rng_, 0.0);
             Vec<Dim> u = controller_->compute(t_, obs);
             last_u_[i] = u;
 

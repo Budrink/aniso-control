@@ -1,0 +1,92 @@
+dim: 2
+
+grid:
+  Nx: 32
+  Ny: 32
+  D_E: 0.5
+  D_x: 0.1
+  gamma_diss: 1.0
+  kappa_tau: 20.0
+  noise_amp: 0.5
+  D_G: 0.02
+  g_noise_init: 0.05
+  eta_ctrl: 0.3
+  wall_absorb: true
+  wall_radius: 0.45
+  heat_profile:
+    cx: 0.5
+    cy: 0.5
+    rx: 0.25
+    ry: 0.25
+    peak: 1.0
+
+time:
+  dt: 0.01
+
+plant:
+  A: [[0.5, 0.8], [-0.8, 0.5]]
+  B: [[1, 0], [0, 1]]
+  w: [0.3, 0.15]
+  x0: [0, 0]
+
+initial_G: identity
+coupling:
+  type: isotropic
+  alpha: 0.5
+  gamma: 1.0
+relaxation:
+  tau: 1.0
+g_response:
+  type: landau_energy
+  kappa: 0.5
+  nu: 0.3
+
+heater:
+  type: pulsed
+  power: 20.0
+  period: 5.0
+  duty: 0.5
+
+feedback:
+  type: traceless
+  kappa: -0.15
+
+resolution:
+  type: metric
+  l0: 0.3
+  alpha: 2.5
+
+observation:
+  type: resolution
+  sigma_G: 0.5
+
+E_target: 2.0
+
+eigenvalue_clamp:
+  lo: 0.3
+  hi: 5.0
+seed: 42
+
+controllers:
+  - name: Proportional
+    type: proportional
+    gain: 3.0
+    u_max: 3.0
+  - name: AnisoAware
+    type: aniso_aware
+    gain: 3.0
+    u_max: 3.0
+
+controller:
+  type: proportional
+  gain: 3.0
+  u_max: 3.0
+
+sweep:
+  param: heater.duty
+  range: [0.1, 0.95, 0.05]
+  steps: 5000
+  warmup: 500
+
+output:
+  csv: sweep_duty_p5.csv

@@ -99,11 +99,16 @@ public:
     double compute(double, double base_profile,
                    const Vec<Dim>&, double,
                    const TensorField<Dim>& G) const override {
-        // Local anisotropy as barrier strength indicator
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G.G);
-        auto ev = solver.eigenvalues();
-        double lmax = ev.maxCoeff();
-        double lmin = std::max(ev.minCoeff(), 1e-6);
+        double lmax, lmin;
+        if constexpr (Dim == 2) {
+            auto e = fast2::eig(G.G);
+            lmin = std::max(e.l1, 1e-6);
+            lmax = e.l2;
+        } else {
+            auto ev = G.eigenvalues();
+            lmax = ev.maxCoeff();
+            lmin = std::max(ev.minCoeff(), 1e-6);
+        }
         double aniso = lmax / lmin - 1.0;
 
         if (active_ && aniso > trigger_ * hysteresis_)
@@ -132,12 +137,17 @@ public:
     double compute(double, double base_profile,
                    const Vec<Dim>&, double,
                    const TensorField<Dim>& G) const override {
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G.G);
-        auto ev = solver.eigenvalues();
-        double lmax = ev.maxCoeff();
-        double lmin = std::max(ev.minCoeff(), 1e-6);
+        double lmax, lmin;
+        if constexpr (Dim == 2) {
+            auto e = fast2::eig(G.G);
+            lmin = std::max(e.l1, 1e-6);
+            lmax = e.l2;
+        } else {
+            auto ev = G.eigenvalues();
+            lmax = ev.maxCoeff();
+            lmin = std::max(ev.minCoeff(), 1e-6);
+        }
         double aniso = lmax / lmin - 1.0;
-        // Weight: heat more where barrier is weak (low anisotropy)
         double w = 1.0 / (1.0 + aniso);
         return power_ * base_profile * w;
     }
@@ -221,6 +231,32 @@ public:
         double phase = std::fmod(t, period_);
         if (phase >= duty_ * period_) return 0.0;
         return power_ * base_profile;
+    }
+};
+
+// ---------------------------------------------------------------------------
+//  8. TargetHeater — P-regulator on local energy toward E_target.
+//     Heats proportionally to (E_target - E), zero when E >= E_target.
+// ---------------------------------------------------------------------------
+template<int Dim>
+class TargetHeater : public IHeater<Dim> {
+    double power_, E_target_, k_heat_;
+public:
+    TargetHeater(double power, double E_target, double k_heat = 1.0)
+        : power_(power), E_target_(std::max(E_target, 0.0)),
+          k_heat_(std::max(k_heat, 0.0)) {}
+
+    void set_power(double p)   override { power_ = p; }
+    void set_trigger(double t) override { E_target_ = std::max(t, 0.0); }
+    std::string type_name() const override { return "target"; }
+
+    double compute(double, double base_profile,
+                   const Vec<Dim>&, double E,
+                   const TensorField<Dim>&) const override {
+        double deficit = E_target_ - E;
+        if (deficit <= 0.0) return 0.0;
+        double gain = std::min(deficit * k_heat_, 1.0);
+        return power_ * gain * base_profile;
     }
 };
 

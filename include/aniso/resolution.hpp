@@ -72,25 +72,43 @@ public:
     std::string type_name() const override { return "metric"; }
 
     Mat<Dim> resolution_tensor(const TensorField<Dim>& G) const override {
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G.G);
-        auto vals = solver.eigenvalues();
-        auto vecs = solver.eigenvectors();
-        Vec<Dim> l_eig;
-        for (int i = 0; i < Dim; ++i)
-            l_eig(i) = l0_ * std::pow(std::max(vals(i), 0.01), alpha_ * 0.5);
-        return vecs * l_eig.asDiagonal() * vecs.transpose();
+        if constexpr (Dim == 2) {
+            auto e = fast2::eig(G.G);
+            double l1 = l0_ * std::pow(std::max(e.l1, 0.01), alpha_ * 0.5);
+            double l2 = l0_ * std::pow(std::max(e.l2, 0.01), alpha_ * 0.5);
+            fast2::Eig2 le{l1, l2, e.v1x, e.v1y, e.v2x, e.v2y};
+            return fast2::reconstruct(le);
+        } else {
+            Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G.G);
+            auto vals = solver.eigenvalues();
+            auto vecs = solver.eigenvectors();
+            Vec<Dim> l_eig;
+            for (int i = 0; i < Dim; ++i)
+                l_eig(i) = l0_ * std::pow(std::max(vals(i), 0.01), alpha_ * 0.5);
+            return vecs * l_eig.asDiagonal() * vecs.transpose();
+        }
     }
 
     Mat<Dim> fisher_info(const TensorField<Dim>& G) const override {
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G.G);
-        auto vals = solver.eigenvalues();
-        auto vecs = solver.eigenvectors();
-        Vec<Dim> f_eig;
-        double s = std::max(l0_, 1e-12);
-        double inv_l0_sq = 1.0 / (s * s);
-        for (int i = 0; i < Dim; ++i)
-            f_eig(i) = inv_l0_sq * std::pow(std::max(vals(i), 0.01), -alpha_);
-        return vecs * f_eig.asDiagonal() * vecs.transpose();
+        if constexpr (Dim == 2) {
+            auto e = fast2::eig(G.G);
+            double s = std::max(l0_, 1e-12);
+            double inv_l0_sq = 1.0 / (s * s);
+            double f1 = inv_l0_sq * std::pow(std::max(e.l1, 0.01), -alpha_);
+            double f2 = inv_l0_sq * std::pow(std::max(e.l2, 0.01), -alpha_);
+            fast2::Eig2 fe{f1, f2, e.v1x, e.v1y, e.v2x, e.v2y};
+            return fast2::reconstruct(fe);
+        } else {
+            Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G.G);
+            auto vals = solver.eigenvalues();
+            auto vecs = solver.eigenvectors();
+            Vec<Dim> f_eig;
+            double s = std::max(l0_, 1e-12);
+            double inv_l0_sq = 1.0 / (s * s);
+            for (int i = 0; i < Dim; ++i)
+                f_eig(i) = inv_l0_sq * std::pow(std::max(vals(i), 0.01), -alpha_);
+            return vecs * f_eig.asDiagonal() * vecs.transpose();
+        }
     }
 };
 

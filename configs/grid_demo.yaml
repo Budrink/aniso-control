@@ -42,8 +42,10 @@ g_response:
   type: relax_aniso    # relax_aniso | relax_energy | melt | landau_energy
 
 heater:
-  type: constant       # constant | pulsed | event_driven | aniso_aware
-  power: 2.0
+  type: target         # constant | pulsed | event_driven | aniso_aware | target
+  power: 5.0
+  E_target: 1.0        # maintain core energy >= 1.0
+  k_heat: 2.0          # proportional gain for target tracking
 
 feedback:
   type: traceless
@@ -81,6 +83,8 @@ controller:
   type: proportional
   gain: 3.0
   u_max: 20.0
+
+E_target: 1.0          # fusion viability constraint: core E must stay >= this
 
 eigenvalue_clamp:
   lo: 0.3

@@ -79,7 +79,7 @@ public:
         const double dt = params_.dt;
         const auto I = Mat<Dim>::Identity();
 
-        auto obs = observer_->observe(state_.x, state_.G, rng_);
+        auto obs = observer_->observe(state_.x, state_.G, rng_, 0.0);
         Vec<Dim> u = controller_->compute(state_.t, obs);
         last_u_ = u;
         recorder_.push(state_.t, state_.x, u, state_.G);

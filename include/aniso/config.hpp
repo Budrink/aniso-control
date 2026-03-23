@@ -95,10 +95,13 @@ std::unique_ptr<IObserver<Dim>> make_observer(const YAML::Node& obs_node,
                                                const YAML::Node& res_node) {
     auto resolution = make_resolution<Dim>(res_node);
     double sigma_G = 0.3;
+    double E_noise_beta = 0.0;
     if (obs_node) {
         sigma_G = obs_node["sigma_G"].as<double>(0.3);
+        E_noise_beta = obs_node["E_noise_beta"].as<double>(0.0);
     }
-    return std::make_unique<ResolutionObserver<Dim>>(std::move(resolution), sigma_G);
+    return std::make_unique<ResolutionObserver<Dim>>(
+        std::move(resolution), sigma_G, E_noise_beta);
 }
 
 // Legacy overload for backward compatibility
@@ -193,6 +196,11 @@ std::unique_ptr<IHeater<Dim>> make_heater(const YAML::Node& node) {
         double duty_min       = node["duty_min"].as<double>(0.15);
         double barrier_target = node["barrier_target"].as<double>(3.0);
         return std::make_unique<AdaptivePulsedHeater<Dim>>(power, period, duty_min, barrier_target);
+    }
+    if (type == "target") {
+        double E_target = node["E_target"].as<double>(1.0);
+        double k_heat   = node["k_heat"].as<double>(1.0);
+        return std::make_unique<TargetHeater<Dim>>(power, E_target, k_heat);
     }
     throw std::runtime_error("Unknown heater type: " + type);
 }
@@ -327,6 +335,7 @@ GridEngine<Dim> build_grid(const YAML::Node& cfg) {
         gp.eig_lo = cfg["eigenvalue_clamp"]["lo"].as<double>(0.3);
         gp.eig_hi = cfg["eigenvalue_clamp"]["hi"].as<double>(5.0);
     }
+    gp.E_target = cfg["E_target"].as<double>(0.0);
     gp.seed = cfg["seed"].as<uint64_t>(42);
 
     GResponseParams rp{gp.tau_0, gp.kappa_tau, gp.noise_amp, gp.eig_lo, gp.eig_hi};

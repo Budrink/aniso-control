@@ -49,32 +49,48 @@ public:
     void set_umax(double u) override { u_max_ = u; }
 
     Vec<Dim> compute(double, const Observation<Dim>& obs) const override {
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(obs.G_hat.G);
-        auto ev = solver.eigenvalues();
-        auto evec = solver.eigenvectors();
+        if constexpr (Dim == 2) {
+            auto ge = fast2::eig(obs.G_hat.G);
+            auto fe = fast2::eig(obs.F);
+            double f_max = std::max(fe.l2, 1e-6);
 
-        // Weight by Fisher information eigenvalues (projected onto G_hat eigenbasis)
-        // F is large where observation is good → push harder there
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> f_solver(obs.F);
-        auto f_ev = f_solver.eigenvalues();
-        auto f_evec = f_solver.eigenvectors();
+            // Project F onto G eigenvectors
+            Vec<2> g1; g1 << ge.v1x, ge.v1y;
+            Vec<2> g2; g2 << ge.v2x, ge.v2y;
+            double fi1 = (g1.transpose() * obs.F * g1)(0, 0) / f_max;
+            double fi2 = (g2.transpose() * obs.F * g2)(0, 0) / f_max;
+            double w1 = std::max(fi1, 0.25);
+            double w2 = std::max(fi2, 0.25);
+            double wmax = std::max(w1, w2);
+            w1 /= wmax; w2 /= wmax;
 
-        // Project F into G_hat eigenbasis: effective weight per G-direction
-        // Floor at 0.25 to maintain stabilizing gain even in poorly-observed directions
-        Vec<Dim> wt;
-        for (int i = 0; i < Dim; ++i) {
-            Vec<Dim> gi = evec.col(i);
-            double fi = (gi.transpose() * obs.F * gi)(0, 0);
-            double fi_norm = fi / std::max(f_ev.maxCoeff(), 1e-6);
-            wt(i) = std::max(fi_norm, 0.25);
+            fast2::Eig2 ke{w1, w2, ge.v1x, ge.v1y, ge.v2x, ge.v2y};
+            Mat<2> K = gain_ * fast2::reconstruct(ke);
+            Vec<2> u = -K * obs.y;
+            double norm = u.norm();
+            if (norm > u_max_) u *= u_max_ / norm;
+            return u;
+        } else {
+            Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(obs.G_hat.G);
+            auto evec = solver.eigenvectors();
+            Eigen::SelfAdjointEigenSolver<Mat<Dim>> f_solver(obs.F);
+            auto f_ev = f_solver.eigenvalues();
+
+            Vec<Dim> wt;
+            for (int i = 0; i < Dim; ++i) {
+                Vec<Dim> gi = evec.col(i);
+                double fi = (gi.transpose() * obs.F * gi)(0, 0);
+                double fi_norm = fi / std::max(f_ev.maxCoeff(), 1e-6);
+                wt(i) = std::max(fi_norm, 0.25);
+            }
+            wt /= wt.maxCoeff();
+
+            Mat<Dim> K = gain_ * evec * wt.asDiagonal() * evec.transpose();
+            Vec<Dim> u = -K * obs.y;
+            double norm = u.norm();
+            if (norm > u_max_) u *= u_max_ / norm;
+            return u;
         }
-        wt /= wt.maxCoeff();
-
-        Mat<Dim> K = gain_ * evec * wt.asDiagonal() * evec.transpose();
-        Vec<Dim> u = -K * obs.y;
-        double norm = u.norm();
-        if (norm > u_max_) u *= u_max_ / norm;
-        return u;
     }
 };
 
@@ -136,28 +152,47 @@ public:
 
         if (!active_) return Vec<Dim>::Zero();
 
-        // Fisher-weighted AnisoAware control using estimated G
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(obs.G_hat.G);
-        auto ev = solver.eigenvalues();
-        auto evec = solver.eigenvectors();
+        if constexpr (Dim == 2) {
+            auto ge = fast2::eig(obs.G_hat.G);
+            auto fe = fast2::eig(obs.F);
+            double f_max = std::max(fe.l2, 1e-6);
 
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> f_solver(obs.F);
-        auto f_ev = f_solver.eigenvalues();
+            Vec<2> g1; g1 << ge.v1x, ge.v1y;
+            Vec<2> g2; g2 << ge.v2x, ge.v2y;
+            double fi1 = (g1.transpose() * obs.F * g1)(0, 0) / f_max;
+            double fi2 = (g2.transpose() * obs.F * g2)(0, 0) / f_max;
+            double w1 = std::max(fi1, 0.25);
+            double w2 = std::max(fi2, 0.25);
+            double wmax = std::max(w1, w2);
+            w1 /= wmax; w2 /= wmax;
 
-        Vec<Dim> wt;
-        for (int i = 0; i < Dim; ++i) {
-            Vec<Dim> gi = evec.col(i);
-            double fi = (gi.transpose() * obs.F * gi)(0, 0);
-            double fi_norm = fi / std::max(f_ev.maxCoeff(), 1e-6);
-            wt(i) = std::max(fi_norm, 0.25);
+            fast2::Eig2 ke{w1, w2, ge.v1x, ge.v1y, ge.v2x, ge.v2y};
+            Mat<2> K = gain_ * fast2::reconstruct(ke);
+            Vec<2> u = -K * obs.y;
+            double norm = u.norm();
+            if (norm > u_max_) u *= u_max_ / norm;
+            return u;
+        } else {
+            Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(obs.G_hat.G);
+            auto evec = solver.eigenvectors();
+            Eigen::SelfAdjointEigenSolver<Mat<Dim>> f_solver(obs.F);
+            auto f_ev = f_solver.eigenvalues();
+
+            Vec<Dim> wt;
+            for (int i = 0; i < Dim; ++i) {
+                Vec<Dim> gi = evec.col(i);
+                double fi = (gi.transpose() * obs.F * gi)(0, 0);
+                double fi_norm = fi / std::max(f_ev.maxCoeff(), 1e-6);
+                wt(i) = std::max(fi_norm, 0.25);
+            }
+            wt /= wt.maxCoeff();
+
+            Mat<Dim> K = gain_ * evec * wt.asDiagonal() * evec.transpose();
+            Vec<Dim> u = -K * obs.y;
+            double norm = u.norm();
+            if (norm > u_max_) u *= u_max_ / norm;
+            return u;
         }
-        wt /= wt.maxCoeff();
-
-        Mat<Dim> K = gain_ * evec * wt.asDiagonal() * evec.transpose();
-        Vec<Dim> u = -K * obs.y;
-        double norm = u.norm();
-        if (norm > u_max_) u *= u_max_ / norm;
-        return u;
     }
 };
 

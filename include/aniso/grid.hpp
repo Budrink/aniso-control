@@ -54,6 +54,10 @@ struct GridParams {
     bool wall_absorb = true;
     double wall_radius = 0.45;
 
+    // Target energy (fusion constraint): reactor must maintain E >= E_target
+    // 0 = no constraint (legacy behavior)
+    double E_target = 0.0;
+
     // Eigenvalue clamp
     double eig_lo = 0.3;
     double eig_hi = 5.0;
@@ -90,16 +94,26 @@ class GridEngine {
     // Disruption tracking (updated each step)
     double wall_flux_ = 0;       // energy flux absorbed by wall this step
 
+    // Cached G⁻¹ per cell (recomputed once per step)
+    std::vector<Mat<Dim>> G_inv_cache_;
+
     int idx(int i, int j) const { return i * Ny_ + j; }
 
-    Mat<Dim> G_inv(int k) const {
-        Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G_[k].G);
-        auto ev = solver.eigenvalues();
-        auto evec = solver.eigenvectors();
-        Vec<Dim> ev_inv;
-        for (int d = 0; d < Dim; ++d)
-            ev_inv(d) = 1.0 / std::max(ev(d), 0.01);
-        return evec * ev_inv.asDiagonal() * evec.transpose();
+    void recompute_G_inv_cache() {
+        if constexpr (Dim == 2) {
+            for (int k = 0; k < total_; ++k)
+                G_inv_cache_[k] = fast2::inverse(G_[k].G);
+        } else {
+            for (int k = 0; k < total_; ++k) {
+                Eigen::SelfAdjointEigenSolver<Mat<Dim>> solver(G_[k].G);
+                auto ev = solver.eigenvalues();
+                auto evec = solver.eigenvectors();
+                Vec<Dim> ev_inv;
+                for (int d = 0; d < Dim; ++d)
+                    ev_inv(d) = 1.0 / std::max(ev(d), 0.01);
+                G_inv_cache_[k] = evec * ev_inv.asDiagonal() * evec.transpose();
+            }
+        }
     }
 
     // Safe energy access: out-of-bounds and wall cells return 0
@@ -146,6 +160,7 @@ public:
         G_.resize(total_); G_buf_.resize(total_);
         E_.resize(total_, 0.0); E_buf_.resize(total_, 0.0);
         last_u_.resize(total_);
+        G_inv_cache_.resize(total_);
         heat_profile_.resize(total_);
         is_wall_.resize(total_, false);
         rebuild_profiles();
@@ -213,6 +228,8 @@ public:
         std::normal_distribution<double> ndist(0.0, 1.0);
         const double sqrt_dt = std::sqrt(dt);
 
+        recompute_G_inv_cache();
+
         // ============================================================
         //  Phase 1: Controller + state dynamics (full tensor diffusion)
         // ============================================================
@@ -220,7 +237,7 @@ public:
             for (int j = 0; j < Ny_; ++j) {
                 int k = idx(i, j);
 
-                auto obs = observer_->observe(x_[k], G_[k], rng_);
+                auto obs = observer_->observe(x_[k], G_[k], rng_, E_[k]);
                 Vec<Dim> u = controller_->compute(t_, obs);
                 last_u_[k] = u;
 
@@ -229,7 +246,7 @@ public:
                              + params_.B * u + params_.w;
 
                 // Full tensor diffusion: ∇·(G⁻¹ ∇x)
-                Mat<Dim> gi = G_inv(k);
+                const Mat<Dim>& gi = G_inv_cache_[k];
                 double gxx = gi(0, 0);
                 double gyy = (Dim >= 2) ? gi(1, 1) : 0.0;
                 double gxy = (Dim >= 2) ? gi(0, 1) : 0.0;
@@ -272,11 +289,11 @@ public:
                 double u2 = last_u_[k].squaredNorm();
                 double Q_ctrl = params_.eta_ctrl * u2;
 
-                // Full tensor energy diffusion: ∇·(G⁻¹ ∇E)
-                Mat<Dim> gi = G_inv(k);
-                double gxx = gi(0, 0);
-                double gyy = (Dim >= 2) ? gi(1, 1) : 0.0;
-                double gxy = (Dim >= 2) ? gi(0, 1) : 0.0;
+                // Full tensor energy diffusion: ∇·(G⁻¹ ∇E) — use cached inverse
+                const Mat<Dim>& gi2 = G_inv_cache_[k];
+                double gxx = gi2(0, 0);
+                double gyy = (Dim >= 2) ? gi2(1, 1) : 0.0;
+                double gxy = (Dim >= 2) ? gi2(0, 1) : 0.0;
 
                 double E_c = E_[k];
                 double dE_flow = gxx * (E_safe(i-1,j) + E_safe(i+1,j) - 2.0*E_c)
@@ -444,6 +461,15 @@ public:
     // Energy confinement time: total_E / wall_flux (in time units)
     double confinement_time() const {
         return total_energy() / std::max(wall_flux_ / params_.dt, 1e-12);
+    }
+
+    // Target energy constraint (0 = no constraint)
+    double E_target() const { return params_.E_target; }
+
+    // Fusion margin: center_E / E_target (>1 = reactor viable, <1 = underheat)
+    double fusion_margin() const {
+        if (params_.E_target <= 0) return 1e6;
+        return center_energy() / params_.E_target;
     }
 
     // Average anisotropy in an annular ring (r_lo..r_hi as fraction of wall_radius)
